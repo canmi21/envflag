@@ -1,13 +1,10 @@
 /* examples/simple.rs */
 
-use std::env;
+//! Example of using envflag to read environment variables.
 
 fn main() {
-	// Manually set some environment variables for the example
-	// In a real scenario, these would be set by the shell or system
-	env::set_var("APP_PORT", "8080");
-	env::set_var("APP_DEBUG", "true");
-	env::set_var("APP_NAME", "DemoApp");
+	println!("To test with custom values, run:");
+	println!("  APP_PORT=8080 APP_DEBUG=true APP_NAME=MyApp cargo run --example simple\n");
 
 	// Read integer with default
 	let port: u16 = envflag::get("APP_PORT", 3000);
