@@ -10,7 +10,7 @@ A strict, zero-boilerplate environment variable manager with `.env` support and 
 - **Dotenv Support**: Seamlessly loads `.env` files upon initialization, or from a custom path.
 - **Prefix Filtering**: Keep only environment variables matching configured prefixes (e.g. `APP_`, `SVC_`).
 - **Validated Builder API**: Chain `.default()`, `.validate()`, and `.get()` for type-safe, validated lookups that return `Result`.
-- **Built-in Validators**: `is_port`, `is_integer`, `is_positive_number`, `is_bool`, `is_url`, and more.
+- **Built-in Validators**: `is_port`, `is_integer`, `is_positive_integer`, `is_positive_number`, `is_bool`, `is_non_empty`, `is_url`, `is_integer_in_range`, and more.
 - **Custom Validators**: Pass any `Fn(&str) -> bool` closure as a validator.
 - **Zero Boilerplate**: No built-in logging or printing; you control how to display your config.
 
@@ -34,7 +34,7 @@ envflag = { version = "0.1", features = ["full"] }
 
 | Feature | Description |
 |---------|-------------|
-| `tracing` | Enables optional `tracing::warn` on validation failures. |
+| `tracing` | Enables optional `tracing::warn` on validation failures and parse fallbacks in convenience API. |
 | `regex` | Enables `matches_regex` validator via `fancy-regex`. |
 | `full` | Enables all features above. |
 
