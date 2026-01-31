@@ -1,12 +1,12 @@
 [package]
 name = "envflag"
 license = "MIT"
-version = "0.0.3"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.93"
 categories = ["config", "os", "parser-implementations"]
-description = "A lightweight utility to read and parse environment variables into any type."
-keywords = ["env", "environment", "variable", "parser", "config"]
+description = "A strict, zero-boilerplate environment variable manager with .env support."
+keywords = ["env", "dotenv", "config", "parser", "12-factor"]
 readme = "README.md"
 repository = "https://github.com/canmi21/envflag.git"
 
@@ -14,14 +14,32 @@ repository = "https://github.com/canmi21/envflag.git"
 all-features = true
 
 [dependencies]
+dotenvy = "0.15"
+thiserror = "2.0"
+tracing = { version = "0.1", optional = true }
+fancy-regex = { version = "0.17", optional = true }
 
 [features]
 default = []
-full = ["std"]
-std = []
+full = ["tracing", "regex"]
+tracing = ["dep:tracing"]
+regex = ["dep:fancy-regex"]
+
+[[example]]
+name = "basic"
+
+[[example]]
+name = "validation"
+
+[[example]]
+name = "prefixes"
+
+[[example]]
+name = "custom_init"
 
 [dev-dependencies]
 temp-env = "0.3"
+serial_test = "3.3"
 
 [lints.rust]
 unsafe_code = "forbid"
