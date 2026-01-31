@@ -1,35 +1,41 @@
 # Envflag
 
-A lightweight utility to read and parse environment variables into any type.
+A strict, zero-boilerplate environment variable manager with `.env` support and validation.
 
-`envflag` provides a simple, one-line API to fetch environment variables and automatically parse them into the desired type, with fallback to default values. It is designed to be zero-dependency (when using `std`) and easy to integrate into any Rust project.
+`envflag` enforces a disciplined approach to configuration: you must explicitly initialize the library (which loads `.env` files via `dotenvy`), and then query typed values through a validated builder API or simple convenience functions.
 
 ## Features
 
-- **Generic Parsing**: Automatically parse environment variables into any type that implements `FromStr`.
-- **String Support**: Specialized helper for reading environment variables as `String`.
-- **Boolean Parsing**: Robust boolean parsing supporting "true", "1", and "yes".
-- **Zero Dependencies**: Pure Rust implementation with no external dependencies.
-- **Safe Fallbacks**: Always returns a default value if the environment variable is missing or invalid.
+- **Strict Initialization**: All queries panic if `init()` has not been called — no silent misconfiguration.
+- **Dotenv Support**: Seamlessly loads `.env` files upon initialization, or from a custom path.
+- **Prefix Filtering**: Keep only environment variables matching configured prefixes (e.g. `APP_`, `SVC_`).
+- **Validated Builder API**: Chain `.default()`, `.validate()`, and `.get()` for type-safe, validated lookups that return `Result`.
+- **Built-in Validators**: `is_port`, `is_integer`, `is_positive_number`, `is_bool`, `is_url`, and more.
+- **Custom Validators**: Pass any `Fn(&str) -> bool` closure as a validator.
+- **Zero Boilerplate**: No built-in logging or printing; you control how to display your config.
 
 ## Usage Examples
 
 Check the `examples` directory for runnable code:
 
-- **Basic Usage**: [`examples/simple.rs`](examples/simple.rs) - Demonstrate reading various types of environment variables.
+- **Basic Usage**: [`examples/basic.rs`](examples/basic.rs) - Initialize and query with convenience API.
+- **Validation**: [`examples/validation.rs`](examples/validation.rs) - Chain validators on environment variables.
+- **Prefix Filtering**: [`examples/prefixes.rs`](examples/prefixes.rs) - Filter and scope variables by prefix.
+- **Custom Init**: [`examples/custom_init.rs`](examples/custom_init.rs) - Load from a specific `.env` file path.
 
 ## Installation
 
 ```toml
 [dependencies]
-envflag = { version = "0.0", features = ["full"] }
+envflag = { version = "0.1", features = ["full"] }
 ```
 
 ## Feature Flags
 
 | Feature | Description |
 |---------|-------------|
-| `std` | Enables standard library support for reading environment variables. |
+| `tracing` | Enables optional `tracing::warn` on validation failures. |
+| `regex` | Enables `matches_regex` validator via `fancy-regex`. |
 | `full` | Enables all features above. |
 
 ## License
