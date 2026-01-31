@@ -19,6 +19,7 @@ pub mod store;
 /// Built-in validation functions.
 pub mod validators;
 
+use std::any::TypeId;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -46,6 +47,10 @@ pub fn init() -> Result<(), EnvflagError> {
 }
 
 /// Initializes the environment loader from a specific file path.
+///
+/// Unlike [`init()`] which silently ignores a missing `.env` file, this
+/// function **requires** the file to exist and will return an error if it
+/// cannot be loaded.
 ///
 /// # Errors
 ///
@@ -80,7 +85,6 @@ pub fn key(name: &str) -> KeyBuilder<'_> {
 	KeyBuilder::new(name)
 }
 
-// --- Convenience API ---
 // These are simple wrappers that silently fall back to the default on any
 // error.  For production config it is recommended to use the `key()` builder
 // which returns `Result` and supports validation.
@@ -96,10 +100,28 @@ pub fn key(name: &str) -> KeyBuilder<'_> {
 /// # Panics
 ///
 /// Panics if the crate has not been initialized.
-pub fn get<T: FromStr>(name: &str, default: T) -> T {
+pub fn get<T: FromStr + 'static>(name: &str, default: T) -> T {
 	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
 	match store.lookup(name, None) {
-		Some(val) => val.parse::<T>().unwrap_or(default),
+		Some(val) => {
+			let val = if TypeId::of::<T>() == TypeId::of::<bool>() {
+				crate::validators::normalize_bool(&val)
+			} else {
+				std::borrow::Cow::Borrowed(val.as_str())
+			};
+			match val.parse::<T>() {
+				Ok(v) => v,
+				Err(_) => {
+					#[cfg(feature = "tracing")]
+					tracing::warn!(
+						key = %name,
+						value = %val,
+						"failed to parse environment variable, using default"
+					);
+					default
+				}
+			}
+		}
 		None => default,
 	}
 }
@@ -123,9 +145,28 @@ pub fn get_string(name: &str, default: &str) -> String {
 ///
 /// Panics if the crate has not been initialized.
 #[must_use]
-pub fn lookup<T: FromStr>(name: &str) -> Option<T> {
+pub fn lookup<T: FromStr + 'static>(name: &str) -> Option<T> {
 	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
-	store.lookup(name, None).and_then(|s| s.parse::<T>().ok())
+	store.lookup(name, None).and_then(|s| {
+		let s = if TypeId::of::<T>() == TypeId::of::<bool>() {
+			crate::validators::normalize_bool(&s)
+		} else {
+			std::borrow::Cow::Borrowed(s.as_str())
+		};
+		#[allow(clippy::manual_ok_err)]
+		match s.parse::<T>() {
+			Ok(v) => Some(v),
+			Err(_) => {
+				#[cfg(feature = "tracing")]
+				tracing::warn!(
+					key = %name,
+					value = %s,
+					"failed to parse environment variable, returning None"
+				);
+				None
+			}
+		}
+	})
 }
 
 /// Retrieves an environment variable as a String, returning `None` if not set.
@@ -151,6 +192,10 @@ pub fn is_set(name: &str) -> bool {
 }
 
 /// Returns all environment variables in the store.
+///
+/// **Warning:** This returns all stored entries including potentially sensitive
+/// values (e.g. `DATABASE_URL`, `SECRET_KEY`). If you need to expose these
+/// (e.g. for debugging), consider filtering or redacting secrets yourself.
 ///
 /// # Panics
 ///
