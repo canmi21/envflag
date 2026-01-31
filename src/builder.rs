@@ -4,6 +4,7 @@
 
 use crate::error::EnvflagError;
 use crate::store::EnvStore;
+use std::any::TypeId;
 use std::fmt;
 use std::str::FromStr;
 
@@ -48,7 +49,7 @@ impl<'a> KeyBuilder<'a> {
 	/// `EnvflagError::ParseFailed` if parsing fails, or
 	/// `EnvflagError::AmbiguousPrefix` if multiple prefixes are configured
 	/// without an explicit `with_prefix` call.
-	pub fn required<T: FromStr>(self) -> Result<T, EnvflagError> {
+	pub fn required<T: FromStr + 'static>(self) -> Result<T, EnvflagError> {
 		let store = EnvStore::get_instance()?;
 
 		if store.prefixes().len() > 1 && self.prefix.is_none() {
@@ -57,11 +58,17 @@ impl<'a> KeyBuilder<'a> {
 			});
 		}
 
-		let val_str = store
+		let raw = store
 			.lookup(self.name, self.prefix)
 			.ok_or_else(|| EnvflagError::NotSet {
 				key: self.name.to_owned(),
 			})?;
+
+		let val_str = if TypeId::of::<T>() == TypeId::of::<bool>() {
+			crate::validators::normalize_bool(&raw).into_owned()
+		} else {
+			raw
+		};
 
 		val_str.parse::<T>().map_err(|_| EnvflagError::ParseFailed {
 			key: self.name.to_owned(),
@@ -94,7 +101,7 @@ impl<T: fmt::Debug> fmt::Debug for TypedKeyBuilder<'_, T> {
 
 impl<'a, T> TypedKeyBuilder<'a, T>
 where
-	T: FromStr + ToString,
+	T: FromStr + ToString + 'static,
 {
 	/// Adds a validator function to be run against the raw string value.
 	///
@@ -126,7 +133,15 @@ where
 		let val_str_opt = store.lookup(self.name, self.prefix);
 
 		match val_str_opt {
-			Some(val_str) => {
+			Some(raw) => {
+				// Normalize booleans before validation so validators see
+				// the canonical "true"/"false" form.
+				let val_str = if TypeId::of::<T>() == TypeId::of::<bool>() {
+					crate::validators::normalize_bool(&raw).into_owned()
+				} else {
+					raw
+				};
+
 				// Run validators
 				for v in &self.validators {
 					if !v(&val_str) {
