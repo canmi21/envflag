@@ -5,8 +5,8 @@ version = "0.1.4"
 edition = "2024"
 rust-version = "1.93"
 categories = ["config", "os", "parser-implementations"]
-description = "A strict, zero-boilerplate environment variable manager with .env support."
-keywords = ["env", "dotenv", "config", "parser", "12-factor"]
+description = "A strict, zero-boilerplate env manager with dotenvy support and validation."
+keywords = ["env", "filter", "config", "parser", "12-factor"]
 readme = "README.md"
 repository = "https://github.com/canmi21/envflag.git"
 
