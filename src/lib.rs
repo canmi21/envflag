@@ -2,140 +2,176 @@
 
 //! # Envflag
 //!
-//! A lightweight utility to read and parse environment variables into any type.
+//! A strict, zero-boilerplate environment variable manager with `.env` support and validation.
+//!
+//! ## Initialization
+//!
+//! Call [`init()`] (or use the [`builder()`]) early in `main()`, **before**
+//! spawning threads. All query functions will panic if the crate has not been
+//! initialized.
 
-#[cfg(feature = "std")]
-use std::env;
-#[cfg(feature = "std")]
+/// Chained query builder for environment variables.
+pub mod builder;
+/// Error types for the crate.
+pub mod error;
+/// Internal environment storage and initialization.
+pub mod store;
+/// Built-in validation functions.
+pub mod validators;
+
+use std::path::Path;
 use std::str::FromStr;
 
-/// Retrieves an environment variable and parses it into the specified type.
+pub use builder::{KeyBuilder, TypedKeyBuilder};
+pub use error::EnvflagError;
+pub use store::InitBuilder;
+
+/// Initializes the environment loader using the default `.env` file and system env.
 ///
-/// If the environment variable is not present or cannot be parsed, the `default` value is returned.
+/// # Errors
+///
+/// Returns an error if the crate is already initialized or if `.env` parsing fails.
 ///
 /// # Examples
 ///
 /// ```rust
-/// // Assuming ENV_VAR is set to "42"
-/// // std::env::set_var("ENV_VAR", "42");
-/// let val: i32 = envflag::get("ENV_VAR", 0);
-/// // val is 42 (if variable is set)
+/// # use envflag::EnvflagError;
+/// # fn main() -> Result<(), EnvflagError> {
+/// envflag::init()?;
+/// # Ok(())
+/// # }
 /// ```
-#[cfg(feature = "std")]
+pub fn init() -> Result<(), EnvflagError> {
+	InitBuilder::new().init()
+}
+
+/// Initializes the environment loader from a specific file path.
+///
+/// # Errors
+///
+/// Returns an error if the crate is already initialized or if the file cannot be loaded.
+pub fn init_from<P: AsRef<Path>>(path: P) -> Result<(), EnvflagError> {
+	InitBuilder::new().path(path).init()
+}
+
+/// Returns a builder for advanced initialization (prefixes, custom paths).
 #[must_use]
-pub fn get<T: FromStr>(key: &str, default: T) -> T {
-	match env::var(key) {
-		Ok(val) => val.parse::<T>().unwrap_or(default),
-		Err(_) => default,
+pub fn builder() -> InitBuilder {
+	InitBuilder::new()
+}
+
+/// Starts a chained query for an environment variable.
+///
+/// This is the **recommended** API. Use it with `.default()` / `.required()`
+/// and optional `.validate()` calls.
+///
+/// # Panics
+///
+/// Panics if the crate has not been initialized.
+///
+/// # Examples
+///
+/// ```rust
+/// # envflag::init().ok();
+/// let port = envflag::key("PORT").default(8080u16).get();
+/// ```
+#[must_use]
+pub fn key(name: &str) -> KeyBuilder<'_> {
+	KeyBuilder::new(name)
+}
+
+// --- Convenience API ---
+// These are simple wrappers that silently fall back to the default on any
+// error.  For production config it is recommended to use the `key()` builder
+// which returns `Result` and supports validation.
+
+/// Retrieves an environment variable and parses it into the specified type.
+///
+/// If the variable is missing or cannot be parsed, returns the `default` value.
+///
+/// **Note:** When multiple prefixes are configured this function cannot
+/// resolve the key and will return `default`. Use [`key()`] with
+/// `.with_prefix()` instead.
+///
+/// # Panics
+///
+/// Panics if the crate has not been initialized.
+pub fn get<T: FromStr>(name: &str, default: T) -> T {
+	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
+	match store.lookup(name, None) {
+		Some(val) => val.parse::<T>().unwrap_or(default),
+		None => default,
 	}
 }
 
 /// Retrieves an environment variable as a String.
 ///
-/// If the environment variable is not present, the `default` value is returned as a String.
+/// # Panics
 ///
-/// # Examples
-///
-/// ```rust
-/// let val = envflag::get_string("USER", "unknown");
-/// ```
-#[cfg(feature = "std")]
+/// Panics if the crate has not been initialized.
 #[must_use]
-pub fn get_string(key: &str, default: &str) -> String {
-	env::var(key).unwrap_or_else(|_| default.to_owned())
+pub fn get_string(name: &str, default: &str) -> String {
+	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
+	store
+		.lookup(name, None)
+		.unwrap_or_else(|| default.to_owned())
 }
 
-/// Retrieves an environment variable and parses it as a boolean.
+/// Retrieves an environment variable and parses it, returning `None` if not set or parse fails.
 ///
-/// The following case-insensitive values are considered `true`:
-/// - "true"
-/// - "1"
-/// - "yes"
+/// # Panics
 ///
-/// All other values (including empty strings) are considered `false`.
-/// If the environment variable is not set, the `default` value is returned.
-///
-/// # Examples
-///
-/// ```rust
-/// let flag = envflag::get_bool("ENABLE_FEATURE", false);
-/// ```
-#[cfg(feature = "std")]
+/// Panics if the crate has not been initialized.
 #[must_use]
-pub fn get_bool(key: &str, default: bool) -> bool {
-	match env::var(key) {
-		Ok(val) => {
-			let s = val.trim().to_lowercase();
-			matches!(s.as_str(), "true" | "1" | "yes")
-		}
-		Err(_) => default,
-	}
+pub fn lookup<T: FromStr>(name: &str) -> Option<T> {
+	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
+	store.lookup(name, None).and_then(|s| s.parse::<T>().ok())
 }
+
+/// Retrieves an environment variable as a String, returning `None` if not set.
+///
+/// # Panics
+///
+/// Panics if the crate has not been initialized.
+#[must_use]
+pub fn lookup_string(name: &str) -> Option<String> {
+	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
+	store.lookup(name, None)
+}
+
+/// Checks if an environment variable is set.
+///
+/// # Panics
+///
+/// Panics if the crate has not been initialized.
+#[must_use]
+pub fn is_set(name: &str) -> bool {
+	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
+	store.lookup(name, None).is_some()
+}
+
+/// Returns all environment variables in the store.
+///
+/// # Panics
+///
+/// Panics if the crate has not been initialized.
+#[must_use]
+pub fn entries() -> Vec<(String, String)> {
+	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
+	store.entries()
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use temp_env;
 
+	// This test must run in a separate process because OnceLock cannot be
+	// reset.  `cargo test` runs each test binary once; as long as no other
+	// test in *this* binary calls init() before this test, it works.
 	#[test]
-	fn test_get_int() {
-		temp_env::with_var("TEST_INT", Some("123"), || {
-			assert_eq!(get("TEST_INT", 0), 123);
-		});
-	}
-
-	#[test]
-	fn test_get_int_default() {
-		temp_env::with_var("TEST_INT_MISSING", None::<&str>, || {
-			assert_eq!(get("TEST_INT_MISSING", 42), 42);
-		});
-	}
-
-	#[test]
-	fn test_get_int_invalid() {
-		temp_env::with_var("TEST_INT_INVALID", Some("abc"), || {
-			assert_eq!(get("TEST_INT_INVALID", 42), 42);
-		});
-	}
-
-	#[test]
-	fn test_get_string() {
-		temp_env::with_var("TEST_STR", Some("hello"), || {
-			assert_eq!(get_string("TEST_STR", "world"), "hello");
-		});
-	}
-
-	#[test]
-	fn test_get_string_default() {
-		temp_env::with_var("TEST_STR_MISSING", None::<&str>, || {
-			assert_eq!(get_string("TEST_STR_MISSING", "world"), "world");
-		});
-	}
-
-	#[test]
-	fn test_get_bool_true_variants() {
-		let true_vals = ["true", "True", "TRUE", "1", "yes", "Yes", "YES"];
-		for val in true_vals {
-			temp_env::with_var("TEST_BOOL", Some(val), || {
-				assert!(get_bool("TEST_BOOL", false), "Failed for value: {}", val);
-			});
-		}
-	}
-
-	#[test]
-	fn test_get_bool_false_variants() {
-		let false_vals = ["false", "0", "no", "foo", ""];
-		for val in false_vals {
-			temp_env::with_var("TEST_BOOL", Some(val), || {
-				assert!(!get_bool("TEST_BOOL", true), "Failed for value: {}", val);
-			});
-		}
-	}
-
-	#[test]
-	fn test_get_bool_default() {
-		temp_env::with_var("TEST_BOOL_MISSING", None::<&str>, || {
-			assert!(get_bool("TEST_BOOL_MISSING", true));
-			assert!(!get_bool("TEST_BOOL_MISSING", false));
-		});
+	#[should_panic(expected = "envflag is not initialized")]
+	fn test_panic_uninitialized() {
+		// Intentionally do NOT call init().
+		let _ = is_set("ANY");
 	}
 }
