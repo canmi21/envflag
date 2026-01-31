@@ -1,5 +1,9 @@
 /* src/lib.rs */
 
+//! # Envflag
+//!
+//! A lightweight utility to read and parse environment variables into any type.
+
 #[cfg(feature = "std")]
 use std::env;
 #[cfg(feature = "std")]
@@ -18,6 +22,7 @@ use std::str::FromStr;
 /// // val is 42 (if variable is set)
 /// ```
 #[cfg(feature = "std")]
+#[must_use]
 pub fn get<T: FromStr>(key: &str, default: T) -> T {
 	match env::var(key) {
 		Ok(val) => val.parse::<T>().unwrap_or(default),
@@ -35,8 +40,9 @@ pub fn get<T: FromStr>(key: &str, default: T) -> T {
 /// let val = envflag::get_string("USER", "unknown");
 /// ```
 #[cfg(feature = "std")]
+#[must_use]
 pub fn get_string(key: &str, default: &str) -> String {
-	env::var(key).unwrap_or_else(|_| default.to_string())
+	env::var(key).unwrap_or_else(|_| default.to_owned())
 }
 
 /// Retrieves an environment variable and parses it as a boolean.
@@ -55,6 +61,7 @@ pub fn get_string(key: &str, default: &str) -> String {
 /// let flag = envflag::get_bool("ENABLE_FEATURE", false);
 /// ```
 #[cfg(feature = "std")]
+#[must_use]
 pub fn get_bool(key: &str, default: bool) -> bool {
 	match env::var(key) {
 		Ok(val) => {
@@ -64,7 +71,6 @@ pub fn get_bool(key: &str, default: bool) -> bool {
 		Err(_) => default,
 	}
 }
-
 #[cfg(test)]
 mod tests {
 	use super::*;
