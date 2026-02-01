@@ -84,10 +84,23 @@ pub fn is_port(s: &str) -> bool {
 	s.trim().parse::<u16>().is_ok_and(|v| v > 0)
 }
 
-/// Simple check if a string looks like a URL (contains "://").
+/// Checks if a string is a valid URL.
+///
+/// When the `url` feature is enabled, this uses the [`url`](https://docs.rs/url)
+/// crate for proper WHATWG URL Standard parsing, which supports any scheme
+/// (`http`, `https`, `redis`, `mongodb`, `postgres`, etc.).
+///
+/// Without the `url` feature, falls back to a simple `contains("://")` check.
 #[must_use]
 pub fn is_url(s: &str) -> bool {
-	s.contains("://")
+	#[cfg(feature = "url")]
+	{
+		url::Url::parse(s.trim()).is_ok()
+	}
+	#[cfg(not(feature = "url"))]
+	{
+		s.contains("://")
+	}
 }
 
 /// Returns a validator that checks if a string matches a regex pattern.

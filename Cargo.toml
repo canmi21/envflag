@@ -1,7 +1,7 @@
 [package]
 name = "envflag"
 license = "MIT"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 rust-version = "1.93"
 categories = ["config", "os", "parser-implementations"]
@@ -18,12 +18,14 @@ dotenvy = "0.15"
 thiserror = "2.0"
 tracing = { version = "0.1", optional = true }
 fancy-regex = { version = "0.17", optional = true }
+url = { version = "2", optional = true }
 
 [features]
 default = []
-full = ["tracing", "regex"]
+full = ["tracing", "regex", "url"]
 tracing = ["dep:tracing"]
 regex = ["dep:fancy-regex"]
+url = ["dep:url"]
 
 [[example]]
 name = "basic"

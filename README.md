@@ -34,8 +34,9 @@ envflag = { version = "0.1", features = ["full"] }
 
 | Feature | Description |
 |---------|-------------|
-| `tracing` | Enables optional `tracing::warn` on validation failures and parse fallbacks in convenience API. |
+| `url` | Enables strict URL validation in `is_url` via the `url` crate (WHATWG URL Standard). |
 | `regex` | Enables `matches_regex` validator via `fancy-regex`. |
+| `tracing` | Enables optional `tracing::warn` on validation failures and parse fallbacks in convenience API. |
 | `full` | Enables all features above. |
 
 ## License
