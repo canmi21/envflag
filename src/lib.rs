@@ -9,6 +9,14 @@
 //! Call [`init()`] (or use the [`builder()`]) early in `main()`, **before**
 //! spawning threads. All query functions will panic if the crate has not been
 //! initialized.
+//!
+//! ## Testing
+//!
+//! For unit tests, construct an [`EnvStore`](store::EnvStore) directly via
+//! [`EnvStore::from_map`](store::EnvStore::from_map) and call its instance
+//! methods ([`get`](store::EnvStore::get), [`key`](store::EnvStore::key),
+//! etc.) instead of the global functions. This avoids the `OnceLock` and
+//! gives each test its own isolated store.
 
 /// Chained query builder for environment variables.
 pub mod builder;
@@ -102,28 +110,7 @@ pub fn key(name: &str) -> KeyBuilder<'_> {
 /// Panics if the crate has not been initialized.
 pub fn get<T: FromStr + 'static>(name: &str, default: T) -> T {
 	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
-	match store.lookup(name, None) {
-		Some(val) => {
-			let val = if TypeId::of::<T>() == TypeId::of::<bool>() {
-				crate::validators::normalize_bool(&val)
-			} else {
-				std::borrow::Cow::Borrowed(val.as_str())
-			};
-			match val.parse::<T>() {
-				Ok(v) => v,
-				Err(_) => {
-					#[cfg(feature = "tracing")]
-					tracing::warn!(
-						key = %name,
-						value = %val,
-						"failed to parse environment variable, using default"
-					);
-					default
-				}
-			}
-		}
-		None => default,
-	}
+	store.get(name, default)
 }
 
 /// Retrieves an environment variable as a String.
@@ -134,9 +121,7 @@ pub fn get<T: FromStr + 'static>(name: &str, default: T) -> T {
 #[must_use]
 pub fn get_string(name: &str, default: &str) -> String {
 	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
-	store
-		.lookup(name, None)
-		.unwrap_or_else(|| default.to_owned())
+	store.get_string(name, default)
 }
 
 /// Retrieves an environment variable and parses it, returning `None` if not set or parse fails.
@@ -147,26 +132,7 @@ pub fn get_string(name: &str, default: &str) -> String {
 #[must_use]
 pub fn lookup<T: FromStr + 'static>(name: &str) -> Option<T> {
 	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
-	store.lookup(name, None).and_then(|s| {
-		let s = if TypeId::of::<T>() == TypeId::of::<bool>() {
-			crate::validators::normalize_bool(&s)
-		} else {
-			std::borrow::Cow::Borrowed(s.as_str())
-		};
-		#[allow(clippy::manual_ok_err)]
-		match s.parse::<T>() {
-			Ok(v) => Some(v),
-			Err(_) => {
-				#[cfg(feature = "tracing")]
-				tracing::warn!(
-					key = %name,
-					value = %s,
-					"failed to parse environment variable, returning None"
-				);
-				None
-			}
-		}
-	})
+	store.lookup_parsed(name)
 }
 
 /// Retrieves an environment variable as a String, returning `None` if not set.
@@ -177,7 +143,7 @@ pub fn lookup<T: FromStr + 'static>(name: &str) -> Option<T> {
 #[must_use]
 pub fn lookup_string(name: &str) -> Option<String> {
 	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
-	store.lookup(name, None)
+	store.lookup_string(name)
 }
 
 /// Checks if an environment variable is set.
@@ -188,7 +154,7 @@ pub fn lookup_string(name: &str) -> Option<String> {
 #[must_use]
 pub fn is_set(name: &str) -> bool {
 	let store = store::EnvStore::get_instance().expect("envflag is not initialized");
-	store.lookup(name, None).is_some()
+	store.is_set(name)
 }
 
 /// Returns all environment variables in the store.
@@ -206,9 +172,114 @@ pub fn entries() -> Vec<(String, String)> {
 	store.entries()
 }
 
+// ---------------------------------------------------------------------------
+// Instance methods on EnvStore — the real logic lives here.
+// ---------------------------------------------------------------------------
+
+impl store::EnvStore {
+	/// Starts a chained query against this store instance.
+	///
+	/// Works exactly like the global [`key()`] function but without requiring
+	/// global initialization, making it ideal for tests.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use std::collections::HashMap;
+	/// use envflag::store::EnvStore;
+	///
+	/// let store = EnvStore::from_map(HashMap::from([
+	///     ("PORT".into(), "3000".into()),
+	/// ]));
+	/// let port: u16 = store.key("PORT").default(8080u16).get().unwrap();
+	/// assert_eq!(port, 3000);
+	/// ```
+	#[must_use]
+	pub fn key<'a>(&'a self, name: &'a str) -> KeyBuilder<'a> {
+		KeyBuilder::new_with_store(name, self)
+	}
+
+	/// Retrieves an environment variable and parses it into the specified type.
+	///
+	/// If the variable is missing or cannot be parsed, returns `default`.
+	pub fn get<T: FromStr + 'static>(&self, name: &str, default: T) -> T {
+		match self.lookup(name, None) {
+			Some(val) => {
+				let val = if TypeId::of::<T>() == TypeId::of::<bool>() {
+					crate::validators::normalize_bool(&val)
+				} else {
+					std::borrow::Cow::Borrowed(val.as_str())
+				};
+				if let Ok(v) = val.parse::<T>() {
+					v
+				} else {
+					#[cfg(feature = "tracing")]
+					tracing::warn!(
+						key = %name,
+						value = %val,
+						"failed to parse environment variable, using default"
+					);
+					default
+				}
+			}
+			None => default,
+		}
+	}
+
+	/// Retrieves an environment variable as a `String`.
+	///
+	/// If not set, returns `default`.
+	#[must_use]
+	pub fn get_string(&self, name: &str, default: &str) -> String {
+		self
+			.lookup(name, None)
+			.unwrap_or_else(|| default.to_owned())
+	}
+
+	/// Retrieves an environment variable and parses it, returning `None` if
+	/// not set or if parsing fails.
+	#[must_use]
+	pub fn lookup_parsed<T: FromStr + 'static>(&self, name: &str) -> Option<T> {
+		self.lookup(name, None).and_then(|s| {
+			let s = if TypeId::of::<T>() == TypeId::of::<bool>() {
+				crate::validators::normalize_bool(&s)
+			} else {
+				std::borrow::Cow::Borrowed(s.as_str())
+			};
+			#[allow(clippy::manual_ok_err)]
+			if let Ok(v) = s.parse::<T>() {
+				Some(v)
+			} else {
+				#[cfg(feature = "tracing")]
+				tracing::warn!(
+					key = %name,
+					value = %s,
+					"failed to parse environment variable, returning None"
+				);
+				None
+			}
+		})
+	}
+
+	/// Retrieves an environment variable as a `String`, returning `None` if
+	/// not set.
+	#[must_use]
+	pub fn lookup_string(&self, name: &str) -> Option<String> {
+		self.lookup(name, None)
+	}
+
+	/// Checks if an environment variable is set in this store.
+	#[must_use]
+	pub fn is_set(&self, name: &str) -> bool {
+		self.lookup(name, None).is_some()
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::collections::HashMap;
+	use store::EnvStore;
 
 	// This test must run in a separate process because OnceLock cannot be
 	// reset.  `cargo test` runs each test binary once; as long as no other
@@ -218,5 +289,217 @@ mod tests {
 	fn test_panic_uninitialized() {
 		// Intentionally do NOT call init().
 		let _ = is_set("ANY");
+	}
+
+	// ---- EnvStore instance tests (no OnceLock needed) --------------------
+
+	fn make_store(pairs: &[(&str, &str)]) -> EnvStore {
+		EnvStore::from_map(
+			pairs
+				.iter()
+				.map(|(k, v)| ((*k).into(), (*v).into()))
+				.collect(),
+		)
+	}
+
+	#[test]
+	fn get_existing_key() {
+		let store = make_store(&[("PORT", "3000")]);
+		assert_eq!(store.get::<u16>("PORT", 8080), 3000);
+	}
+
+	#[test]
+	fn get_missing_key_returns_default() {
+		let store = make_store(&[]);
+		assert_eq!(store.get::<u16>("PORT", 8080), 8080);
+	}
+
+	#[test]
+	fn get_unparseable_returns_default() {
+		let store = make_store(&[("PORT", "abc")]);
+		assert_eq!(store.get::<u16>("PORT", 8080), 8080);
+	}
+
+	#[test]
+	fn get_bool_normalizes() {
+		let store = make_store(&[("DEBUG", "yes"), ("VERBOSE", "0")]);
+		assert!(store.get::<bool>("DEBUG", false));
+		assert!(!store.get::<bool>("VERBOSE", true));
+	}
+
+	#[test]
+	fn get_string_existing() {
+		let store = make_store(&[("HOST", "localhost")]);
+		assert_eq!(store.get_string("HOST", "0.0.0.0"), "localhost");
+	}
+
+	#[test]
+	fn get_string_missing() {
+		let store = make_store(&[]);
+		assert_eq!(store.get_string("HOST", "0.0.0.0"), "0.0.0.0");
+	}
+
+	#[test]
+	fn lookup_parsed_existing() {
+		let store = make_store(&[("PORT", "9090")]);
+		assert_eq!(store.lookup_parsed::<u16>("PORT"), Some(9090));
+	}
+
+	#[test]
+	fn lookup_parsed_missing() {
+		let store = make_store(&[]);
+		assert_eq!(store.lookup_parsed::<u16>("PORT"), None);
+	}
+
+	#[test]
+	fn lookup_parsed_unparseable() {
+		let store = make_store(&[("PORT", "xyz")]);
+		assert_eq!(store.lookup_parsed::<u16>("PORT"), None);
+	}
+
+	#[test]
+	fn lookup_string_existing() {
+		let store = make_store(&[("HOST", "localhost")]);
+		assert_eq!(store.lookup_string("HOST"), Some("localhost".to_owned()));
+	}
+
+	#[test]
+	fn lookup_string_missing() {
+		let store = make_store(&[]);
+		assert_eq!(store.lookup_string("HOST"), None);
+	}
+
+	#[test]
+	fn is_set_true() {
+		let store = make_store(&[("A", "1")]);
+		assert!(store.is_set("A"));
+	}
+
+	#[test]
+	fn is_set_false() {
+		let store = make_store(&[]);
+		assert!(!store.is_set("A"));
+	}
+
+	#[test]
+	fn entries_returns_all() {
+		let store = make_store(&[("A", "1"), ("B", "2")]);
+		let mut e = store.entries();
+		e.sort();
+		assert_eq!(
+			e,
+			vec![
+				("A".to_owned(), "1".to_owned()),
+				("B".to_owned(), "2".to_owned()),
+			]
+		);
+	}
+
+	// ---- Builder API via store.key() ------------------------------------
+
+	#[test]
+	fn key_default_existing() {
+		let store = make_store(&[("PORT", "3000")]);
+		let v: u16 = store.key("PORT").default(8080u16).get().unwrap();
+		assert_eq!(v, 3000);
+	}
+
+	#[test]
+	fn key_default_missing() {
+		let store = make_store(&[]);
+		let v: u16 = store.key("PORT").default(8080u16).get().unwrap();
+		assert_eq!(v, 8080);
+	}
+
+	#[test]
+	fn key_required_existing() {
+		let store = make_store(&[("PORT", "3000")]);
+		let v: u16 = store.key("PORT").required().unwrap();
+		assert_eq!(v, 3000);
+	}
+
+	#[test]
+	fn key_required_missing() {
+		let store = make_store(&[]);
+		let err = store.key("PORT").required::<u16>().unwrap_err();
+		assert!(matches!(err, EnvflagError::NotSet { .. }));
+	}
+
+	#[test]
+	fn key_validate_pass() {
+		let store = make_store(&[("PORT", "8080")]);
+		let v: u16 = store
+			.key("PORT")
+			.default(3000u16)
+			.validate(validators::is_port)
+			.get()
+			.unwrap();
+		assert_eq!(v, 8080);
+	}
+
+	#[test]
+	fn key_validate_fail() {
+		let store = make_store(&[("PORT", "0")]);
+		let err = store
+			.key("PORT")
+			.default(3000u16)
+			.validate(validators::is_port)
+			.get()
+			.unwrap_err();
+		assert!(matches!(err, EnvflagError::ValidationFailed { .. }));
+	}
+
+	#[test]
+	fn key_parse_fail() {
+		let store = make_store(&[("PORT", "abc")]);
+		let err = store.key("PORT").required::<u16>().unwrap_err();
+		assert!(matches!(err, EnvflagError::ParseFailed { .. }));
+	}
+
+	#[test]
+	fn key_bool_normalization() {
+		let store = make_store(&[("FLAG", "yes")]);
+		let v: bool = store.key("FLAG").required().unwrap();
+		assert!(v);
+	}
+
+	// ---- Prefix tests ---------------------------------------------------
+
+	#[test]
+	fn single_prefix_auto() {
+		let store = EnvStore::from_map_with_prefixes(
+			HashMap::from([("APP_PORT".into(), "3000".into())]),
+			vec!["APP_".into()],
+		);
+		let v: u16 = store.key("PORT").default(8080u16).get().unwrap();
+		assert_eq!(v, 3000);
+	}
+
+	#[test]
+	fn multi_prefix_explicit() {
+		let store = EnvStore::from_map_with_prefixes(
+			HashMap::from([
+				("APP_PORT".into(), "3000".into()),
+				("SVC_PORT".into(), "4000".into()),
+			]),
+			vec!["APP_".into(), "SVC_".into()],
+		);
+		let v: u16 = store
+			.key("PORT")
+			.with_prefix("SVC_")
+			.default(8080u16)
+			.get()
+			.unwrap();
+		assert_eq!(v, 4000);
+	}
+
+	#[test]
+	fn multi_prefix_ambiguous() {
+		let store = EnvStore::from_map_with_prefixes(
+			HashMap::from([("APP_PORT".into(), "3000".into())]),
+			vec!["APP_".into(), "SVC_".into()],
+		);
+		let err = store.key("PORT").default(8080u16).get().unwrap_err();
+		assert!(matches!(err, EnvflagError::AmbiguousPrefix { .. }));
 	}
 }

@@ -13,11 +13,35 @@ use std::str::FromStr;
 pub struct KeyBuilder<'a> {
 	name: &'a str,
 	prefix: Option<&'a str>,
+	store: Option<&'a EnvStore>,
 }
 
 impl<'a> KeyBuilder<'a> {
+	/// Creates a new `KeyBuilder` that resolves against the global store.
 	pub(crate) fn new(name: &'a str) -> Self {
-		Self { name, prefix: None }
+		Self {
+			name,
+			prefix: None,
+			store: None,
+		}
+	}
+
+	/// Creates a new `KeyBuilder` that resolves against the given store.
+	pub(crate) fn new_with_store(name: &'a str, store: &'a EnvStore) -> Self {
+		Self {
+			name,
+			prefix: None,
+			store: Some(store),
+		}
+	}
+
+	/// Resolves the store reference, falling back to the global instance.
+	fn resolve_store(&self) -> Result<&EnvStore, EnvflagError> {
+		if let Some(s) = self.store {
+			Ok(s)
+		} else {
+			EnvStore::get_instance()
+		}
 	}
 
 	/// Specifies which prefix to use for this lookup.
@@ -36,6 +60,7 @@ impl<'a> KeyBuilder<'a> {
 		TypedKeyBuilder {
 			name: self.name,
 			prefix: self.prefix,
+			store: self.store,
 			default_val: val,
 			validators: Vec::new(),
 		}
@@ -50,7 +75,7 @@ impl<'a> KeyBuilder<'a> {
 	/// `EnvflagError::AmbiguousPrefix` if multiple prefixes are configured
 	/// without an explicit `with_prefix` call.
 	pub fn required<T: FromStr + 'static>(self) -> Result<T, EnvflagError> {
-		let store = EnvStore::get_instance()?;
+		let store = self.resolve_store()?;
 
 		if store.prefixes().len() > 1 && self.prefix.is_none() {
 			return Err(EnvflagError::AmbiguousPrefix {
@@ -81,6 +106,7 @@ impl<'a> KeyBuilder<'a> {
 pub struct TypedKeyBuilder<'a, T> {
 	name: &'a str,
 	prefix: Option<&'a str>,
+	store: Option<&'a EnvStore>,
 	default_val: T,
 	validators: Vec<Box<dyn Fn(&str) -> bool>>,
 }
@@ -103,6 +129,15 @@ impl<'a, T> TypedKeyBuilder<'a, T>
 where
 	T: FromStr + ToString + 'static,
 {
+	/// Resolves the store reference, falling back to the global instance.
+	fn resolve_store(&self) -> Result<&EnvStore, EnvflagError> {
+		if let Some(s) = self.store {
+			Ok(s)
+		} else {
+			EnvStore::get_instance()
+		}
+	}
+
 	/// Adds a validator function to be run against the raw string value.
 	///
 	/// Multiple validators can be chained; all must pass.
@@ -122,7 +157,7 @@ where
 	/// - `EnvflagError::AmbiguousPrefix` if multiple prefixes are configured
 	///   without an explicit `with_prefix` call.
 	pub fn get(self) -> Result<T, EnvflagError> {
-		let store = EnvStore::get_instance()?;
+		let store = self.resolve_store()?;
 
 		if store.prefixes().len() > 1 && self.prefix.is_none() {
 			return Err(EnvflagError::AmbiguousPrefix {

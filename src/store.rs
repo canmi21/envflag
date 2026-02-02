@@ -13,8 +13,13 @@ use crate::error::EnvflagError;
 pub(crate) static INSTANCE: OnceLock<EnvStore> = OnceLock::new();
 
 /// Internal storage for environment variables and configuration.
+///
+/// This type holds the loaded environment variables and any configured
+/// prefixes.  It is normally created via [`InitBuilder`] and stored in a
+/// global [`OnceLock`], but can also be constructed directly with
+/// [`EnvStore::from_map`] for unit-testing purposes.
 #[derive(Debug)]
-pub(crate) struct EnvStore {
+pub struct EnvStore {
 	map: HashMap<String, String>,
 	prefixes: Vec<String>,
 }
@@ -24,6 +29,40 @@ impl EnvStore {
 		INSTANCE.get().ok_or(EnvflagError::NotInitialized)
 	}
 
+	/// Creates an `EnvStore` directly from a map of key-value pairs.
+	///
+	/// This is intended for **testing**: it lets you construct a store without
+	/// touching the global [`OnceLock`], so every test can have its own
+	/// isolated instance.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use std::collections::HashMap;
+	/// use envflag::store::EnvStore;
+	///
+	/// let store = EnvStore::from_map(HashMap::from([
+	///     ("PORT".into(), "8080".into()),
+	/// ]));
+	/// assert_eq!(store.lookup("PORT", None), Some("8080".to_owned()));
+	/// ```
+	#[must_use]
+	pub fn from_map(map: HashMap<String, String>) -> Self {
+		Self {
+			map,
+			prefixes: Vec::new(),
+		}
+	}
+
+	/// Creates an `EnvStore` from a map with the given prefixes.
+	///
+	/// Same as [`from_map`](Self::from_map) but also sets prefix
+	/// configuration, useful for testing prefix-related logic.
+	#[must_use]
+	pub fn from_map_with_prefixes(map: HashMap<String, String>, prefixes: Vec<String>) -> Self {
+		Self { map, prefixes }
+	}
+
 	/// Looks up a key in the store.
 	///
 	/// When prefixes are configured:
@@ -31,7 +70,8 @@ impl EnvStore {
 	/// - Multiple prefixes: `preferred_prefix` **must** be specified; otherwise returns `None`.
 	///
 	/// When no prefixes are configured, looks up the key directly.
-	pub(crate) fn lookup(&self, key: &str, preferred_prefix: Option<&str>) -> Option<String> {
+	#[must_use]
+	pub fn lookup(&self, key: &str, preferred_prefix: Option<&str>) -> Option<String> {
 		if self.prefixes.is_empty() {
 			// No prefix mode — direct lookup.
 			return self.map.get(key).cloned();
@@ -51,11 +91,15 @@ impl EnvStore {
 		None
 	}
 
-	pub(crate) fn prefixes(&self) -> &[String] {
+	/// Returns the configured prefixes.
+	#[must_use]
+	pub fn prefixes(&self) -> &[String] {
 		&self.prefixes
 	}
 
-	pub(crate) fn entries(&self) -> Vec<(String, String)> {
+	/// Returns all environment variables in the store.
+	#[must_use]
+	pub fn entries(&self) -> Vec<(String, String)> {
 		self
 			.map
 			.iter()
